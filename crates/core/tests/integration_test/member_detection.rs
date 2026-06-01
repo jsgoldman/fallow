@@ -718,3 +718,34 @@ fn ignore_decorators_applies_to_declaring_class_only() {
         "AdminPage has no own members; no findings should be attributed to it, found: {admin_findings:?}"
     );
 }
+
+/// Regression test for issue #844: typed locally-instantiated instance method
+/// calls must be credited at monorepo scope when the class is imported via a
+/// tsconfig path alias from a sibling package.
+///
+/// Pattern: `const [svc] = useMemo(() => new DataService(), []); svc.fetchData()`
+/// where `DataService` lives in `packages/services` and is imported via the
+/// `@services/*` path alias configured in `apps/app/tsconfig.json`.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn typed_instance_usememo_credits_methods_across_monorepo_path_alias() {
+    let root = fixture_path("issue-844-typed-instance-monorepo-alias");
+    let config = create_config(root);
+    let results = fallow_core::analyze(&config).expect("analysis should succeed");
+
+    let unused: Vec<String> = results
+        .unused_class_members
+        .iter()
+        .map(|m| format!("{}.{}", m.member.parent_name, m.member.member_name))
+        .collect();
+
+    assert!(
+        !unused.contains(&"DataService.fetchData".to_string()),
+        "DataService.fetchData is called via useMemo-wrapped instance through a path alias and must not be reported unused; found: {unused:?}"
+    );
+
+    assert!(
+        unused.contains(&"DataService.unusedMethod".to_string()),
+        "DataService.unusedMethod is genuinely unused and must still be reported; found: {unused:?}"
+    );
+}
